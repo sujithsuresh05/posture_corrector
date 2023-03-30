@@ -7,6 +7,7 @@ import android.graphics.Matrix;
 import android.graphics.PointF;
 import android.graphics.RectF;
 
+import com.hackthon.poseestimation.body.HumanoidAndBodyDistance;
 import com.hackthon.poseestimation.body.JoinPoint;
 import com.hackthon.poseestimation.body.Part;
 import com.hackthon.poseestimation.body.Person;
@@ -24,6 +25,7 @@ import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 public class MoveNetVisualEvaluator implements VisualEvaluator {
@@ -32,12 +34,21 @@ public class MoveNetVisualEvaluator implements VisualEvaluator {
     private static final String LIGHTER_FILENAME = "movenet_lightning.tflite";
     private static final int CPU_NUM_THREADS = 4;
 
+    private static final float MIN_CROP_KEYPOINT_SCORE = .2f;
+
+    // Parameters that control how large crop region should be expanded from previous frames'
+    // body keypoints.
+    private static final float TORSO_EXPANSION_RATIO = 1.9f;
+    private static final float BODY_EXPANSION_RATIO = 1.2f;
+
     private final Context mContext;
     private Interpreter interpreter;
 
     private int inputWidth;
 
     private int inputHeight;
+
+    private RectF cropRegion;
 
     public MoveNetVisualEvaluator(Context context) throws IOException {
         this.mContext = context;
@@ -83,7 +94,10 @@ public class MoveNetVisualEvaluator implements VisualEvaluator {
 
         float totalScore = 0f;
         int numKeyPoints = outputArray[2];
-        RectF cropRegion = getRectF(bitmap.getWidth(), bitmap.getHeight());
+        if (cropRegion == null) {
+            cropRegion = getRectF(bitmap.getWidth(), bitmap.getHeight());
+        }
+
         RectF rect = new RectF(
                 (cropRegion.left * bitmap.getWidth()),
                 (cropRegion.top * bitmap.getHeight()),
@@ -134,9 +148,104 @@ public class MoveNetVisualEvaluator implements VisualEvaluator {
         List<Person> personList = new ArrayList<>();
         personList.add(person);
         //TensorImage inputTensor = processInputImage(bitmap,)
+        // new crop region
+        cropRegion = determineRectF(jointPoints, bitmap.getWidth(), bitmap.getHeight());
         return personList;
     }
 
+    private RectF determineRectF(List<JoinPoint> joinPoints, Integer imageWidth, Integer imageHeight) {
+        List<JoinPoint> targetJoinPoints = new ArrayList<JoinPoint>();
+        joinPoints.forEach(jp -> {
+            targetJoinPoints.add(new JoinPoint(jp.getPart(), new PointF(jp.getCoordinate().x, jp.getCoordinate().y), jp.getVisibilityScore()));
+        });
+        if (humanoidVisible(targetJoinPoints)) {
+            float centerX =
+                    (targetJoinPoints.get(Part.LEFT_HIP.getPosition()).getCoordinate().x +
+                            targetJoinPoints.get(Part.RIGHT_HIP.getPosition()).getCoordinate().x) / 2f;
+            float centerY =
+                    (targetJoinPoints.get(Part.LEFT_HIP.getPosition()).getCoordinate().y +
+                            targetJoinPoints.get(Part.RIGHT_HIP.getPosition()).getCoordinate().y) / 2f;
+
+            HumanoidAndBodyDistance humanoidAndBodyDistance = determineTorsoAndBodyDistances(joinPoints, targetJoinPoints, centerX, centerY);
+            Float[] bodyDistances = new Float[]{
+                    humanoidAndBodyDistance.getMaxHumanoidXDistance() * TORSO_EXPANSION_RATIO,
+                    humanoidAndBodyDistance.getMaxHumanoidYDistance() * TORSO_EXPANSION_RATIO,
+                    humanoidAndBodyDistance.getMaxBodyXDistance() * BODY_EXPANSION_RATIO,
+                    humanoidAndBodyDistance.getMaxBodyYDistance() * BODY_EXPANSION_RATIO
+            };
+            float cropLengthHalf = Collections.max(Arrays.asList(bodyDistances));
+            Float[] tmp = new Float[]{
+                    centerX, imageWidth - centerX, centerY, imageHeight - centerY
+            };
+            cropLengthHalf = Math.min(cropLengthHalf, Collections.max(Arrays.asList(tmp)));
+            float first = centerY - cropLengthHalf;
+            float second = centerX - cropLengthHalf;
+
+            if (cropLengthHalf > Math.max(imageWidth, imageHeight) / 2f) {
+                return getRectF(imageWidth, imageHeight);
+            } else {
+                float cropLength = cropLengthHalf * 2;
+                return new RectF(
+                        second / imageWidth,
+                        first / imageHeight,
+                        (second + cropLength) / imageWidth,
+                        (first + cropLength) / imageHeight
+                );
+            }
+        } else {
+            return getRectF(imageWidth, imageHeight);
+        }
+    }
+
+    private HumanoidAndBodyDistance determineTorsoAndBodyDistances(
+            List<JoinPoint> joinPoints,
+            List<JoinPoint> targetJoinPoints,
+            float centerX,
+            float centerY
+    ) {
+        Integer[] points = new Integer[]{
+                Part.LEFT_SHOULDER.getPosition(),
+                Part.RIGHT_SHOULDER.getPosition(),
+                Part.LEFT_HIP.getPosition(),
+                Part.RIGHT_HIP.getPosition()};
+        List<Integer> torsoJoints = Arrays.asList(points);
+
+        float maxTorsoYRange = 0f;
+        float maxTorsoXRange = 0f;
+        for (int joint : torsoJoints) {
+            float distY = Math.abs(centerY - targetJoinPoints.get(joint).getCoordinate().y);
+            float distX = Math.abs(centerX - targetJoinPoints.get(joint).getCoordinate().x);
+            if (distY > maxTorsoYRange) maxTorsoYRange = distY;
+            if (distX > maxTorsoXRange) maxTorsoXRange = distX;
+        }
+
+        float maxBodyYRange = 0f;
+        float maxBodyXRange = 0f;
+        for (int joint : torsoJoints) {
+            if (joinPoints.get(joint).getVisibilityScore() < MIN_CROP_KEYPOINT_SCORE)
+                continue;
+            float distY = Math.abs(centerY - joinPoints.get(joint).getCoordinate().y);
+            float distX = Math.abs(centerX - joinPoints.get(joint).getCoordinate().x);
+
+            if (distY > maxBodyYRange) maxBodyYRange = distY;
+            if (distX > maxBodyXRange) maxBodyXRange = distX;
+        }
+        return new HumanoidAndBodyDistance(
+                maxTorsoYRange,
+                maxTorsoXRange,
+                maxBodyYRange,
+                maxBodyXRange
+        );
+    }
+
+    private boolean humanoidVisible(List<JoinPoint> joinPoints) {
+        return ((joinPoints.get(Part.LEFT_HIP.getPosition()).getVisibilityScore() > MIN_CROP_KEYPOINT_SCORE) || (
+                joinPoints.get(Part.RIGHT_HIP.getPosition()).getVisibilityScore() > MIN_CROP_KEYPOINT_SCORE))
+                && (
+                (joinPoints.get(Part.LEFT_SHOULDER.getPosition()).getVisibilityScore() > MIN_CROP_KEYPOINT_SCORE) || (
+                        joinPoints.get(Part.RIGHT_SHOULDER.getPosition()).getVisibilityScore() > MIN_CROP_KEYPOINT_SCORE
+                ));
+    }
 
     private RectF getRectF(int imageWidth, int imageHeight) {
         float xMin;
@@ -162,7 +271,7 @@ public class MoveNetVisualEvaluator implements VisualEvaluator {
         );
     }
 
-    public void close()  {
+    public void close() {
         interpreter.close();
     }
 }
