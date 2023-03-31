@@ -6,7 +6,7 @@ public class JoinPoint {
 
     private final Part part;
 
-    private final PointF coordinate;
+    private PointF coordinate;
 
     // this score can be used to filter out the visible and not visible part
     private final float visibilityScore;
@@ -28,5 +28,9 @@ public class JoinPoint {
 
     public float getVisibilityScore() {
         return new Float(visibilityScore);
+    }
+
+    public void setCoordinate(PointF coordinate) {
+        this.coordinate = coordinate;
     }
 }

@@ -244,19 +244,19 @@ public class SecondFragment extends Fragment {
         int left = 0;
         int top = 0;
 
-//        if (screenHeight > screenWidth) {
-//            float ratio = ((float) outputBitmap.getHeight()) / outputBitmap.getWidth();
-//            screenWidth = canvas.getWidth();
-//            left = 0;
-//            screenHeight = (int) (canvas.getWidth() * ratio);
-//            top = (canvas.getHeight() - screenHeight) / 2;
-//        } else {
-//            float ratio = ((float) outputBitmap.getWidth()) / outputBitmap.getHeight();
-//            screenHeight = canvas.getHeight();
-//            top = 0;
-//            screenWidth = (int) (canvas.getHeight() * ratio);
-//            left = (canvas.getWidth() - screenWidth) / 2;
-//        }
+        if (screenHeight > screenWidth) {
+            float ratio = ((float) outputBitmap.getHeight()) / outputBitmap.getWidth();
+            screenWidth = canvas.getWidth();
+            left = 0;
+            screenHeight = (int) (canvas.getWidth() * ratio);
+            top = (canvas.getHeight() - screenHeight) / 2;
+        } else {
+            float ratio = ((float) outputBitmap.getWidth()) / outputBitmap.getHeight();
+            screenHeight = canvas.getHeight();
+            top = 0;
+            screenWidth = (int) (canvas.getHeight() * ratio);
+            left = (canvas.getWidth() - screenWidth) / 2;
+        }
         int right = left + screenWidth;
         int bottom = top + screenHeight;
 

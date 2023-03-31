@@ -15,6 +15,7 @@ import com.hackthon.poseestimation.body.Person;
 import org.checkerframework.checker.units.qual.A;
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.gpu.GpuDelegate;
 import org.tensorflow.lite.support.common.FileUtil;
 import org.tensorflow.lite.support.image.ImageProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
@@ -31,7 +32,7 @@ import java.util.List;
 public class MoveNetVisualEvaluator implements VisualEvaluator {
 
     private static final String THUNDER_FILENAME = "movenet_thunder.tflite";
-    private static final String LIGHTER_FILENAME = "movenet_lightning.tflite";
+    //private static final String LIGHTER_FILENAME = "movenet_lightning.tflite";
     private static final int CPU_NUM_THREADS = 4;
 
     private static final float MIN_CROP_KEYPOINT_SCORE = .2f;
@@ -54,9 +55,10 @@ public class MoveNetVisualEvaluator implements VisualEvaluator {
         this.mContext = context;
         Interpreter.Options options = new Interpreter.Options();
         options.setNumThreads(CPU_NUM_THREADS);
+        options.addDelegate(new GpuDelegate());
         interpreter = new Interpreter(FileUtil.loadMappedFile(
                 context,
-                LIGHTER_FILENAME
+                THUNDER_FILENAME
         ));
         inputWidth = interpreter.getInputTensor(0).shape()[1];
         inputHeight = interpreter.getInputTensor(0).shape()[2];
@@ -115,8 +117,8 @@ public class MoveNetVisualEvaluator implements VisualEvaluator {
         // generate tensor image
         TensorImage inputTensorImage = processInputImage(detectBitmap, inputWidth, inputHeight);
         TensorBuffer outputTensorBuffer = TensorBuffer.createFixedSize(outputArray, DataType.FLOAT32);
-        float widthRatio = (float) detectBitmap.getWidth() / inputWidth;
-        float heightRatio = (float) detectBitmap.getHeight() / inputHeight;
+        float widthRatio = ((float) detectBitmap.getWidth()) / inputWidth;
+        float heightRatio = ((float) detectBitmap.getHeight()) / inputHeight;
 
         List<JoinPoint> jointPoints = new ArrayList<>();
         List<Float> positions = new ArrayList<>();
@@ -141,9 +143,19 @@ public class MoveNetVisualEvaluator implements VisualEvaluator {
         }
 
         Matrix matrix = new Matrix();
-        Float[] points = positions.toArray(new Float[positions.size()]);
+        float[] floatArray = new float[positions.size()];
+        for (int i = 0; i < positions.size(); i++) {
+            floatArray[i] = (float) positions.get(i);
+        }
         matrix.postTranslate(rect.left, rect.top);
+        matrix.mapPoints(floatArray);
 
+
+
+        for (int i = 0; i < jointPoints.size(); i++) {
+            jointPoints.get(i).setCoordinate(new PointF(floatArray[i * 2],
+                    floatArray[i * 2 + 1]));
+        }
         Person person = new Person(jointPoints, totalScore / numKeyPoints);
         List<Person> personList = new ArrayList<>();
         personList.add(person);
